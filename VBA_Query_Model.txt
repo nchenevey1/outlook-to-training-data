@@ -1,0 +1,104 @@
+Sub QueryModel()
+
+Dim olApp As Object
+Dim olNamespace As Object
+Dim olMail As Object
+
+Set olApp = CreateObject("Outlook.Application")
+Set olNamespace = olApp.GetNamespace("MAPI")
+Set olMail = olApp.CreateItem(0) ' 0 represents MailItem
+
+Dim olSelection As Object
+Dim olReply As Object
+
+Set olSelection = olApp.ActiveExplorer.Selection
+If olSelection.Count > 0 Then
+    Dim subject As String
+    Dim subjectBytes As String
+    
+    Dim senderName As String
+    Dim nameBytes As String
+    
+    Dim receivedTime As String
+    Dim timeBytes As String
+    
+    Dim originalBody As String
+    Dim bodyBytes As String
+
+    Set olReply = olSelection.Item(1).Reply
+    
+    subject = olReply.subject
+    senderName = olSelection.Item(1).senderName
+    receivedTime = olSelection.Item(1).receivedTime
+    originalBody = olReply.Body
+    
+    subjectBytes = "'" & StringToByteString(subject) & "'"
+    nameBytes = "'" & StringToByteString(senderName) & "'"
+    timeBytes = "'" & StringToByteString(receivedTime) & "'"
+    bodyBytes = "'" & StringToByteString(originalBody) & "'"
+    
+End If
+
+Dim receivedData As String
+receivedData = ShellOutput("pythonw C:\path\to\Query_model.pyw " & bodyBytes & " " & subjectBytes & " " & nameBytes & " " & timeBytes)
+
+receivedData = Replace(receivedData, "!NEWLINE!", vbCrLf)
+
+With olMail
+    .HTMLBody = receivedData
+    .Display ' Display the email draft
+End With
+
+End Sub
+
+' Converts a given string to a hexadecimal byte string representation.
+' Parameters: 
+'   inputString - The input string to be converted.
+' Returns: 
+'   String - A string representing the hexadecimal byte values of the input string.
+Function StringToByteString(inputString As String) As String
+    Dim byteString As String
+    Dim originalBodyBytes() As Byte
+    Dim i As Long
+
+    originalBodyBytes = StrConv(inputString, vbFromUnicode)
+
+    For i = LBound(originalBodyBytes) To UBound(originalBodyBytes)
+        byteString = byteString & Hex(originalBodyBytes(i))
+    Next i
+
+    byteString = Replace(byteString, " ", "")
+    byteString = Replace(byteString, vbCrLf, "")
+
+    StringToByteString = byteString
+End Function
+
+
+' Executes a shell command and returns the last line of the output.
+' Parameters:
+'   cmd (String) - The shell command to be executed.
+' Returns:
+'   String - The last line of the output from the executed shell command.
+Function ShellOutput(cmd As String) As String
+
+    Dim oShell As Object, oCmd As String
+    Dim oExec As Object, oOutput As Object
+    Dim arg As Variant
+    Dim s As String, sLine As String
+
+    Set oShell = CreateObject("WScript.Shell")
+    Set oExec = oShell.Exec(cmd)
+    Set oOutput = oExec.StdOut
+
+    While Not oOutput.AtEndOfStream
+        sLine = oOutput.ReadLine
+        If sLine <> "" Then s = sLine
+    Wend
+
+    ShellOutput = s
+
+    Set oOutput = Nothing
+    Set oExec = Nothing
+    Set oShell = Nothing
+
+End Function

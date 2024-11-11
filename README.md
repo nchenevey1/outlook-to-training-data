@@ -1,15 +1,14 @@
 # Outlook Replied Emails to Training Data
-
 Reads N number of your sent email conversations, converts them to training data, then writes to a .txt file.
 
+# VBA Query Model and Query Model Script
+Reads the currently selected email and queries a local model using llama.cpp to create a reply email draft.
+
 * <a href="#info">General Information</a>
-* <a href="#training">Training COLAB
+* <a href="#training">Training COLAB</a>
+* <a href="#demo">Demonstration</a>
 
 ## <a id="info" href="#toc">General Information</a>
-* Email reply bodies are assumed to follow the default format:
-```
-From: NAME <EMAIL>\r\nSent: DATE\r\nTo: USER\r\nSubject: SUBJECT\r\n \r\nBODY
-```
 * Currently formats the data into the following format:
 ```
 {
@@ -36,4 +35,6 @@ From: NAME <EMAIL>\r\nSent: DATE\r\nTo: USER\r\nSubject: SUBJECT\r\n \r\nBODY
 * Data can be trained using this GITHUB with Unsloth:
   - https://colab.research.google.com/drive/1fKWyiiDJoWy_hGqETYHfQiYiRX5cVKx6?usp=sharing
 
+## <a id="demo" href="#toc">Demonstration</a>
 
+https://github.com/user-attachments/assets/203ad6f3-12f4-4214-b504-1035c999c608

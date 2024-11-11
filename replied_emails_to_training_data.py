@@ -1,57 +1,113 @@
 """
 Author: Nicholas Chenevey
-Date: 10/08/2024
-
-This script processes email conversations from Microsoft Outlook, parses them into individual emails, 
-and converts them into a dataset suitable for training machine learning models. The dataset includes 
-prompts and completions based on the email content, sender, recipient, and other metadata.
+Date: 11/10/2024
+This script processes sent email data and generates training data for the model.
 """
-
 
 import win32com.client
 from datetime import datetime
 import itertools
 import re
 
-def parseConversation(conversation):
-    """
-    Parses an email conversation string into a dictionary of individual emails.
-    Args:
-        conversation (str): The email conversation string to be parsed.
-    Returns:
-        dict: A dictionary where each key is an email ID (starting from 0) and each value is a dictionary 
-              containing the parsed details of the email with the following keys:
-              - "From": The sender of the email.
-              - "Sent": The date and time the email was sent.
-              - "To": The recipient(s) of the email.
-              - "Subject": The subject of the email.
-              - "Body": The body content of the email.
-    """
-    email_sections = conversation.split("From: ")
-    email_sections.pop(0)
-    idEmail = 0
-    conversationDict = {}
+def extract_emails(email_body, conversationDict, convID):
+    # Define patterns to match the start of quoted replies
+    patterns = [
+        (r"On\s.+,\s.+\swrote:", "Pattern 1"),              # Pattern for: On [Date], [Name] wrote:
+        (r"On\s.+,\s\d{4}.*<.*?>\s*wrote:", "Pattern 2"),   # Handles variations with HTML-like tags in the email
+        (r"_{5,}\s*From:", "Pattern 3"),                    # Pattern for lines that start with 5 or more underscores followed by "From:"
+    ]
 
-    for email in email_sections:
-        mailDict = {}
-        emailData = email.split("\r\n", 1)
-        mailDict["From"] = emailData[0]
-
-        emailData = emailData[1].split("To: ", 1)
-        mailDict["Sent"] = emailData[0][6:-5]
-
-        emailData = emailData[1].split("\r\n", 1)
-        mailDict["To"] = emailData[0]
-
-        emailData = emailData[1].split("\r\n", 1)
-        mailDict["Subject"] = emailData[0][9:]
-
-        mailDict["Body"] = emailData[1]
-
-        conversationDict[idEmail] = mailDict
-        idEmail += 1
-
+    # Combine the patterns into a single regex with OR condition
+    combined_pattern = re.compile("|".join(p[0] for p in patterns), re.MULTILINE | re.IGNORECASE)
+    # Find the position of the first match, if any
+    match = combined_pattern.search(email_body)
+    
+    if match:
+        # Determine which pattern was matched
+        for pattern, name in patterns:
+            if re.match(pattern, email_body[match.start():], re.MULTILINE | re.IGNORECASE):
+                # print(f"Matched: {name}") # Debug print
+                match_format = name[-1]
+                break
+        if match_format == "3":
+            emailBody = email_body[:match.start()].strip()
+            emailData = email_body[match.start():].strip()
+            conversationDict[convID]["0"]["Body"] = emailBody
+            emailDict = parseConversationFrom(emailData)
+            conversationDict[convID].update(emailDict)
+        elif match_format in ["1", "2"]:
+            emailBody = email_body[:match.start()].strip()
+            emailData = email_body[match.start():].strip()
+            conversationDict[convID]["0"]["Body"] = emailBody
+            emailDict = parseConversationOnWrote(emailData)
+            conversationDict[convID].update(emailDict)
+        return conversationDict
+    # If no match is found, return the full email body
+    conversationDict[convID]["0"]["Body"] = email_body.strip()
     return conversationDict
+
+def extract_field_on_wrote(data, field_name, delimiter="\r\n"):
+    field_data, remaining_data = data.split(delimiter, 1)
+    field_len = len(field_name)
+    if field_name == "On ":
+        field_len = 0
+    return field_data[field_len:].strip(), remaining_data
+
+def parseConversationOnWrote(conversation):
+    email_sections = conversation.split("wrote:\r\n\r\n")
+    conversation_dict = {}
+    id_email = 0
+    for emailInfo, emailBody in pairwise(email_sections):
+        id_email += 1
+        if emailInfo.strip() == "":
+            id_email -= 1
+            continue
+        mail_dict = {}
+        email_data, remaining_data = emailInfo.split(",", 1)
+        mail_dict["Sent"] = email_data[3:]
+
+        email_data = remaining_data.strip()
+        mail_dict["From"] = email_data
+
+        mail_dict["Body"] = emailBody.strip()
+
+        conversation_dict[str(id_email)] = mail_dict
+    return conversation_dict
+
+def extract_field_from(data, field_name, delimiter="\r\n"):
+    field_data, remaining_data = data.split(delimiter, 1)
+    field_len = len(field_name)
+    if field_name == "From: ":
+        field_len = 0
+    return field_data[field_len:].strip(), remaining_data
+
+def parseConversationFrom(conversation):
+    email_sections = conversation.split("From: ")
+    conversation_dict = {}
+    id_email = 0
+    for email in email_sections:
+        id_email += 1
+        if email.strip() == "" or set(email.strip()) == {"_"}:
+            id_email -= 1
+            continue
+        mail_dict = {}
+        email_data, remaining_data = extract_field_from(email, "From: ")
+        mail_dict["From"] = email_data
+
+        email_data, remaining_data = extract_field_from(remaining_data, "Sent: ")
+        mail_dict["Sent"] = email_data
+
+        email_data, remaining_data = extract_field_from(remaining_data, "To: ")
+        mail_dict["To"] = email_data
+
+        email_data, remaining_data = extract_field_from(remaining_data, "Subject: ")
+        mail_dict["Subject"] = email_data
+
+        mail_dict["Body"] = remaining_data.strip()
+
+        conversation_dict[str(id_email)] = mail_dict
+
+    return conversation_dict
 
 def format_date(date_string):
     # Parse the date_string into a datetime object
@@ -60,16 +116,22 @@ def format_date(date_string):
     formatted_date = date_obj.strftime("%A, %B %d, %Y %I:%M %p")
     return formatted_date
 
-def GetConversations():
+def GetConversationsFromSentEmails():
     outlook = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
-    numEmails = int(input("Enter the number of emails to process: "))
+    numEmails = input("Enter the number of emails to process: ")
 
-    if numEmails is None or numEmails < 1:
+    try:
+        numEmails = int(numEmails)
+        if numEmails < 1:
+            print("Please enter a valid number")
+            quit()
+    except ValueError:
         print("Please enter a valid number")
         quit()
         
-    sentInbox = outlook.GetDefaultFolder(5) # "5" refers to the index of a folder sent in this case
+    sentInbox = outlook.GetDefaultFolder(5) # "5" refers to the index of the 'sent' folder
     olItems = sentInbox.Items
+    olItems.Sort("[ReceivedTime]", True)
 
     conversationDict = {}
     olItem = olItems.GetFirst()
@@ -78,25 +140,25 @@ def GetConversations():
             break
         oConv = olItem.GetConversation()
         if oConv is not None:
-            if oConv.ConversationID not in conversationDict:
-                childID = 1
-                for childItem in oConv.GetChildren(olItem):
-                    mailReply = childItem.Reply()
-                    mailRecipients = mailReply.Recipients[0]
-                    mailAddressEntry = mailRecipients.AddressEntry
-                    if mailAddressEntry.GetExchangeUser() is not None:
-                        senderEmail = mailAddressEntry.GetExchangeUser().PrimarySmtpAddress
-                    else:
-                        senderEmail = mailAddressEntry.Address
-                    sender = "From: " + childItem.SenderName + " <" + senderEmail + ">\r\n"
-                    time = "Sent: " + format_date(str(childItem.SentOn)) + "\r\n"
-                    sentTo = "To: " + childItem.To + "\r\n"
-                    subject = "Subject: " + childItem.Subject + "\r\n \r\n"
-                    childBody = sender + time + sentTo + subject + childItem.Body
-                    conversationDict.setdefault(oConv.ConversationID, {})[str(childID)] = parseConversation(childBody)
-                    childID += 1
+            ConvID = oConv.ConversationID
+            if ConvID not in conversationDict:
+                # Get the sender's email address
+                mailReply = olItem.Reply()
+                mailRecipients = mailReply.Recipients[0]
+                mailAddressEntry = mailRecipients.AddressEntry
+                if mailAddressEntry.GetExchangeUser() is not None:
+                    senderEmail = mailAddressEntry.GetExchangeUser().PrimarySmtpAddress
+                else:
+                    senderEmail = mailAddressEntry.Address
+                sender = olItem.SenderName + " <" + senderEmail + ">"
+                # Extract the time, recipients, and subject of the email
+                time = format_date(str(olItem.SentOn))
+                sentTo = olItem.To
+                subject = olItem.Subject
+                childID = 0
+                conversationDict.setdefault(ConvID, {})[str(childID)] = {"From": sender, "Sent": time, "To": sentTo, "Subject": subject}
+                conversationDict = extract_emails(olItem.Body, conversationDict, ConvID)
         olItem = olItems.GetNext()
-    
     return conversationDict
 
 def pairwise(iterableObject):
@@ -126,41 +188,35 @@ def is_phrase_in(phrase, text):
 def ConvertToDataset(conversationDict, userName, userEmail):
     conversationDataDict = {"prompt": [], "completion": []}
     for conversationID in conversationDict:
-        for childID in conversationDict[conversationID]:
-            for emailIDA, emailIDB in pairwise(conversationDict[conversationID][childID]):
-                emailA = conversationDict[conversationID][childID][emailIDA]
-                emailB = conversationDict[conversationID][childID][emailIDB]
-                if is_phrase_in(userName, emailA["From"]) or is_phrase_in(userEmail, emailA["From"]):
+        for emailIDA, emailIDB in pairwise(conversationDict[conversationID]):
+            emailA = conversationDict[conversationID][emailIDA]
+            emailB = conversationDict[conversationID][emailIDB]
+            if is_phrase_in(userName, emailA["From"]) or is_phrase_in(userEmail, emailA["From"]):
+                conversationDataPrompt = []
+                conversationDataCompletion = []
 
-                    conversationDataPrompt = []
-                    conversationDataCompletion = []
+                roleData = "user"
+                contentData = "From: '" + emailB.get("From", "N/A") + "' To: '" + emailB.get("To", "N/A") + "' Sent Date: '" + emailB.get("Sent", "N/A") + "' With subject: '" + emailB.get("Subject", "N/A") + "' With content: '" + emailB.get("Body", "N/A") + "'"
+                conversationDataPrompt.append(contentDict(roleData, contentData))
 
-                    #roleData = "system"
-                    #contentData = "You are an Outlook assistant writing emails for " + userName #" writing to " + emailA["To"] + " in response to an email sent on " + emailB["Sent"] + " with the subject " + emailB["Subject"]
-                    #conversationData.append(contentDict(roleData, contentData))
+                roleData = "assistant"
+                contentData = emailA["Body"]
+                conversationDataCompletion.append(contentDict(roleData, contentData))
 
-                    roleData = "user"
-                    contentData = "From: '" + emailB["From"] + "' To: '" + emailB["To"] + "' Sent Date: '" + emailB["Sent"] + "' With subject: '" + emailB["Subject"] + "' With content: '" + emailB["Body"] +"'"
-                    conversationDataPrompt.append(contentDict(roleData, contentData))
-
-                    roleData = "assistant"
-                    contentData = emailA["Body"]
-                    conversationDataCompletion.append(contentDict(roleData, contentData))
-
-                    conversationDataDict["prompt"].append(conversationDataPrompt)
-                    conversationDataDict["completion"].append(conversationDataCompletion)
-
+                conversationDataDict["prompt"].append(conversationDataPrompt)
+                conversationDataDict["completion"].append(conversationDataCompletion)
     # return conversationDataList
     return conversationDataDict
 
 # Run the functions
-
-userName = "USER NAME"
+userName = "USER"
 userEmail = "USER EMAIL"
-dataList = ConvertToDataset(GetConversations(), userName, userEmail)
+dataList = ConvertToDataset(GetConversationsFromSentEmails(), userName, userEmail)
 
 with open("output.txt", "w") as f:
     f.write(str(dataList))
+
+
 
 
 
