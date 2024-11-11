@@ -33,7 +33,7 @@ Reads the currently selected email and queries a local model using llama.cpp to 
 
 ## <a id="training" href="#toc">Training COLAB</a>
 * Data can be trained using this GITHUB with Unsloth:
-  - https://colab.research.google.com/drive/1fKWyiiDJoWy_hGqETYHfQiYiRX5cVKx6?usp=sharing
+  - https://colab.research.google.com/drive/1pJLuRyHyV4TnMTtYcL-tbxA65fWACcMK?usp=sharing
 
 ## <a id="demo" href="#toc">Demonstration</a>
 
